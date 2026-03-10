@@ -40,3 +40,10 @@ def consume_and_store_order(engine):
             ch.basic_ack(delivery_tag=method.delivery_tag)
         except Exception as e:
             print(f" [-] error: {e}")
+
+
+    channel.basic_consume(
+        queue=RABBITMQ_QUEUE,
+        on_message_callback=callback
+    )
+    channel.start_consuming()
