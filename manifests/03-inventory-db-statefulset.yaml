@@ -32,6 +32,26 @@ spec:
         image: k3d-registry.localhost:5000/inventory-db:latest
         ports:
         - containerPort: 5432
+        livenessProbe:
+          exec:
+            command:
+            - pg_isready
+            - -U
+            - postgres
+          initialDelaySeconds: 30
+          periodSeconds: 10
+          timeoutSeconds: 5
+          failureThreshold: 3
+        readinessProbe:
+          exec:
+            command:
+            - pg_isready
+            - -U
+            - postgres
+          initialDelaySeconds: 10
+          periodSeconds: 5
+          timeoutSeconds: 3
+          failureThreshold: 3
         env:
         - name: DB_USER
           valueFrom:
