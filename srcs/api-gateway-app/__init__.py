@@ -22,4 +22,13 @@ def create_app():
         response.status_code = 404
         return response
 
+    @app.route("/api/billing/", methods=["POST"])
+    def send_to_billing_queue():
+        if not request.is_json:
+            return jsonify(error="Body must be JSON"), 400
+
+        body = request.get_json()
+        send_message_to_billing_queue(body)
+        return jsonify(message=f"{body} sent"), 200
+
     return app
