@@ -32,6 +32,26 @@ spec:
         image: k3d-registry.localhost:5000/billing-app:latest
         ports:
         - containerPort: 5000
+        livenessProbe:
+          exec:
+            command:
+            - python
+            - -c
+            - "import pika; exit(0)"
+          initialDelaySeconds: 60
+          periodSeconds: 30
+          timeoutSeconds: 10
+          failureThreshold: 3
+        readinessProbe:
+          exec:
+            command:
+            - python
+            - -c
+            - "import pika; exit(0)"
+          initialDelaySeconds: 30
+          periodSeconds: 10
+          timeoutSeconds: 5
+          failureThreshold: 3
         env:
         - name: BILLING_APP_PORT
           valueFrom:
