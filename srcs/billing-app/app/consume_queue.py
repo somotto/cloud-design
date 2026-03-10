@@ -24,3 +24,19 @@ def consume_and_store_order(engine):
     )
     channel = connection.channel()
     channel.queue_declare(queue=RABBITMQ_QUEUE, durable=True)
+
+
+    def callback(
+            ch: pika.channel.Channel,
+            method: pika.channel.spec.Basic.Deliver,
+            properties: pika.channel.spec.BasicProperties,
+            body: bytes
+    ):
+        print(f" [.] received: {body.decode()}")
+        try:
+            new_order = json.loads(body.decode())
+            create_order(engine, new_order)
+            print(" [x] created new order")
+            ch.basic_ack(delivery_tag=method.delivery_tag)
+        except Exception as e:
+            print(f" [-] error: {e}")
