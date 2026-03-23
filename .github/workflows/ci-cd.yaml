@@ -24,18 +24,32 @@ jobs:
       with:
         python-version: '3.12'
     
-    - name: Install dependencies
-      run: |
-        pip install pytest pytest-cov flake8
-        pip install -r srcs/inventory-app/requirements.txt
-        pip install -r srcs/billing-app/requirements.txt
-        pip install -r srcs/api-gateway-app/requirements.txt
-    
+    - name: Install test tools
+      run: pip install pytest pytest-cov flake8
+
     - name: Lint with flake8
       run: |
         flake8 srcs/ --count --select=E9,F63,F7,F82 --show-source --statistics
         flake8 srcs/ --count --exit-zero --max-complexity=10 --max-line-length=127 --statistics
-    
+
+    - name: Install inventory-app deps and test
+      run: |
+        python -m venv .venv-inventory
+        .venv-inventory/bin/pip install --upgrade pip
+        .venv-inventory/bin/pip install -r srcs/inventory-app/requirements.txt
+
+    - name: Install billing-app deps and test
+      run: |
+        python -m venv .venv-billing
+        .venv-billing/bin/pip install --upgrade pip
+        .venv-billing/bin/pip install -r srcs/billing-app/requirements.txt
+
+    - name: Install api-gateway deps and test
+      run: |
+        python -m venv .venv-gateway
+        .venv-gateway/bin/pip install --upgrade pip
+        .venv-gateway/bin/pip install -r srcs/api-gateway-app/requirements.txt
+
     - name: Run tests
       run: |
         echo "Add your tests here"
