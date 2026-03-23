@@ -5,3 +5,19 @@ __pycache__/
 .DS_Store
 .vscode/
 .idea/
+
+# Terraform
+**/.terraform*
+**/.terraform.lock.hcl
+*.tfstate
+*.tfstate.backup
+*.tfstate.*.backup
+tfplan
+*.tfplan
+terraform.tfvars
+override.tf
+override.tf.json
+*_override.tf
+*_override.tf.json
+crash.log
+crash.*.log
