@@ -1,0 +1,119 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: api-gateway
+  namespace: orchestrator
+spec:
+  # ClusterIP — ALB routes to pods directly via IP target type
+  selector:
+    app: api-gateway
+  ports:
+    - port: 3000
+      targetPort: 3000
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: api-gateway
+  namespace: orchestrator
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: api-gateway
+  template:
+    metadata:
+      labels:
+        app: api-gateway
+    spec:
+      containers:
+      - name: api-gateway
+        image: ECR_REGISTRY/orchestrator/api-gateway:latest
+        ports:
+        - containerPort: 3000
+        livenessProbe:
+          httpGet:
+            path: /api/movies
+            port: 3000
+          initialDelaySeconds: 30
+          periodSeconds: 10
+          timeoutSeconds: 5
+          failureThreshold: 3
+        readinessProbe:
+          httpGet:
+            path: /api/movies
+            port: 3000
+          initialDelaySeconds: 10
+          periodSeconds: 5
+          timeoutSeconds: 3
+          failureThreshold: 3
+        env:
+        - name: APIGATEWAY_PORT
+          valueFrom:
+            configMapKeyRef:
+              name: app-config
+              key: APIGATEWAY_PORT
+        - name: INVENTORY_APP_HOST
+          value: "inventory-app"
+        - name: INVENTORY_APP_PORT
+          valueFrom:
+            configMapKeyRef:
+              name: app-config
+              key: INVENTORY_APP_PORT
+        - name: BILLING_APP_HOST
+          value: "billing-app"
+        - name: RABBITMQ_HOST
+          value: "billing-queue"
+        - name: RABBITMQ_PORT
+          valueFrom:
+            configMapKeyRef:
+              name: app-config
+              key: RABBITMQ_PORT
+        - name: RABBITMQ_USER
+          valueFrom:
+            secretKeyRef:
+              name: rabbitmq-secrets
+              key: RABBITMQ_USER
+        - name: RABBITMQ_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: rabbitmq-secrets
+              key: RABBITMQ_PASSWORD
+        - name: RABBITMQ_QUEUE
+          valueFrom:
+            secretKeyRef:
+              name: rabbitmq-secrets
+              key: RABBITMQ_QUEUE
+        resources:
+          requests:
+            cpu: 100m
+            memory: 128Mi
+          limits:
+            cpu: 500m
+            memory: 512Mi
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: api-gateway-hpa
+  namespace: orchestrator
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: api-gateway
+  minReplicas: 1
+  maxReplicas: 5
+  metrics:
+  - type: Resource
+    resource:
+      name: cpu
+      target:
+        type: Utilization
+        averageUtilization: 60
+  - type: Resource
+    resource:
+      name: memory
+      target:
+        type: Utilization
+        averageUtilization: 70
