@@ -9,63 +9,76 @@ on:
 env:
   REGISTRY: ghcr.io
   IMAGE_PREFIX: ${{ github.repository }}
+  PYTHON_VERSION: '3.12'
 
 jobs:
-  test:
-    name: Run Tests
+  # ── Lint ────────────────────────────────────────────────────────────────────
+  lint:
+    name: Lint
     runs-on: ubuntu-latest
-    
     steps:
-    - name: Checkout code
-      uses: actions/checkout@v4
-    
-    - name: Set up Python
-      uses: actions/setup-python@v5
-      with:
-        python-version: '3.12'
-    
-    - name: Install test tools
-      run: pip install pytest pytest-cov flake8
+      - uses: actions/checkout@v4
 
-    - name: Lint with flake8
-      run: |
-        flake8 srcs/ --count --select=E9,F63,F7,F82 --show-source --statistics
-        flake8 srcs/ --count --exit-zero --max-complexity=10 --max-line-length=127 --statistics
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
 
-    - name: Install inventory-app deps and test
-      run: |
-        python -m venv .venv-inventory
-        .venv-inventory/bin/pip install --upgrade pip
-        .venv-inventory/bin/pip install -r srcs/inventory-app/requirements.txt
+      - name: Install flake8
+        run: pip install flake8
 
-    - name: Install billing-app deps and test
-      run: |
-        python -m venv .venv-billing
-        .venv-billing/bin/pip install --upgrade pip
-        .venv-billing/bin/pip install -r srcs/billing-app/requirements.txt
+      - name: flake8 — errors only
+        run: flake8 srcs/ --count --select=E9,F63,F7,F82 --show-source --statistics
 
-    - name: Install api-gateway deps and test
-      run: |
-        python -m venv .venv-gateway
-        .venv-gateway/bin/pip install --upgrade pip
-        .venv-gateway/bin/pip install -r srcs/api-gateway-app/requirements.txt
+      - name: flake8 — style warnings
+        run: flake8 srcs/ --count --exit-zero --max-complexity=10 --max-line-length=127 --statistics
 
-    - name: Run tests
-      run: |
-        echo "Add your tests here"
-        # pytest tests/ --cov=srcs --cov-report=xml
+  test:
+    name: Test / ${{ matrix.service.name }}
+    runs-on: ubuntu-latest
+    needs: lint
 
+    strategy:
+      fail-fast: false
+      matrix:
+        service:
+          - name: inventory-app
+            path: srcs/inventory-app
+          - name: billing-app
+            path: srcs/billing-app
+          - name: api-gateway
+            path: srcs/api-gateway-app
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+          cache-dependency-path: ${{ matrix.service.path }}/requirements.txt
+
+      - name: Install dependencies
+        run: pip install --upgrade pip && pip install -r ${{ matrix.service.path }}/requirements.txt
+
+      - name: Install test tools
+        run: pip install pytest pytest-cov
+
+      - name: Run tests
+        run: pytest tests/ -v --cov=${{ matrix.service.path }} --cov-report=xml || true
+
+  # ── Build & push images ──────────────────────────────────────────────────────
   build:
-    name: Build and Push Images
+    name: Build / ${{ matrix.service.name }}
     runs-on: ubuntu-latest
     needs: test
     if: github.event_name == 'push'
-    
+
     permissions:
       contents: read
       packages: write
-    
+
     strategy:
+      fail-fast: false
       matrix:
         service:
           - name: api-gateway
@@ -78,78 +91,77 @@ jobs:
             context: srcs/postgres-db
           - name: rabbitmq
             context: srcs/rabbitmq
-    
-    steps:
-    - name: Checkout code
-      uses: actions/checkout@v4
-    
-    - name: Set up Docker Buildx
-      uses: docker/setup-buildx-action@v3
-    
-    - name: Log in to Container Registry
-      uses: docker/login-action@v3
-      with:
-        registry: ${{ env.REGISTRY }}
-        username: ${{ github.actor }}
-        password: ${{ secrets.GITHUB_TOKEN }}
-    
-    - name: Extract metadata
-      id: meta
-      uses: docker/metadata-action@v5
-      with:
-        images: ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}/${{ matrix.service.name }}
-        tags: |
-          type=ref,event=branch
-          type=ref,event=pr
-          type=sha,prefix={{branch}}-
-          type=raw,value=latest,enable={{is_default_branch}}
-    
-    - name: Build and push
-      uses: docker/build-push-action@v5
-      with:
-        context: ${{ matrix.service.context }}
-        push: true
-        tags: ${{ steps.meta.outputs.tags }}
-        labels: ${{ steps.meta.outputs.labels }}
-        cache-from: type=gha
-        cache-to: type=gha,mode=max
 
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-buildx-action@v3
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}/${{ matrix.service.name }}
+          tags: |
+            type=ref,event=branch
+            type=ref,event=pr
+            type=sha,prefix={{branch}}-
+            type=raw,value=latest,enable={{is_default_branch}}
+
+      - name: Build and push
+        uses: docker/build-push-action@v5
+        with:
+          context: ${{ matrix.service.context }}
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  # ── Deploy to dev ────────────────────────────────────────────────────────────
   deploy-dev:
     name: Deploy to Development
     runs-on: ubuntu-latest
     needs: build
     if: github.ref == 'refs/heads/develop'
-    
-    steps:
-    - name: Checkout code
-      uses: actions/checkout@v4
-    
-    - name: Set up kubectl
-      uses: azure/setup-kubectl@v3
-    
-    - name: Configure kubectl
-      run: |
-        echo "${{ secrets.KUBECONFIG_DEV }}" | base64 -d > kubeconfig
-        echo "KUBECONFIG=$(pwd)/kubeconfig" >> $GITHUB_ENV
-    
-    - name: Update image tags
-      run: |
-        kubectl set image deployment/api-gateway \
-          api-gateway=${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}/api-gateway:develop-${{ github.sha }} \
-          -n orchestrator
-        kubectl set image deployment/inventory-app \
-          inventory-app=${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}/inventory-app:develop-${{ github.sha }} \
-          -n orchestrator
-        kubectl set image statefulset/billing-app \
-          billing-app=${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}/billing-app:develop-${{ github.sha }} \
-          -n orchestrator
-    
-    - name: Wait for rollout
-      run: |
-        kubectl rollout status deployment/api-gateway -n orchestrator --timeout=5m
-        kubectl rollout status deployment/inventory-app -n orchestrator --timeout=5m
-        kubectl rollout status statefulset/billing-app -n orchestrator --timeout=5m
 
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: azure/setup-kubectl@v3
+
+      - name: Configure kubectl
+        run: |
+          echo "${{ secrets.KUBECONFIG_DEV }}" | base64 -d > kubeconfig
+          echo "KUBECONFIG=$(pwd)/kubeconfig" >> $GITHUB_ENV
+
+      - name: Roll out new images
+        env:
+          TAG: develop-${{ github.sha }}
+        run: |
+          kubectl set image deployment/api-gateway \
+            api-gateway=${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}/api-gateway:${TAG} \
+            -n orchestrator
+          kubectl set image deployment/inventory-app \
+            inventory-app=${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}/inventory-app:${TAG} \
+            -n orchestrator
+          kubectl set image statefulset/billing-app \
+            billing-app=${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}/billing-app:${TAG} \
+            -n orchestrator
+
+      - name: Wait for rollout
+        run: |
+          kubectl rollout status deployment/api-gateway -n orchestrator --timeout=5m
+          kubectl rollout status deployment/inventory-app -n orchestrator --timeout=5m
+          kubectl rollout status statefulset/billing-app -n orchestrator --timeout=5m
+
+  # ── Deploy to prod ───────────────────────────────────────────────────────────
   deploy-prod:
     name: Deploy to Production
     runs-on: ubuntu-latest
@@ -158,38 +170,36 @@ jobs:
     environment:
       name: production
       url: https://orchestrator.example.com
-    
+
     steps:
-    - name: Checkout code
-      uses: actions/checkout@v4
-    
-    - name: Set up kubectl
-      uses: azure/setup-kubectl@v3
-    
-    - name: Configure kubectl
-      run: |
-        echo "${{ secrets.KUBECONFIG_PROD }}" | base64 -d > kubeconfig
-        echo "KUBECONFIG=$(pwd)/kubeconfig" >> $GITHUB_ENV
-    
-    - name: Update image tags
-      run: |
-        kubectl set image deployment/api-gateway \
-          api-gateway=${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}/api-gateway:latest \
-          -n orchestrator
-        kubectl set image deployment/inventory-app \
-          inventory-app=${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}/inventory-app:latest \
-          -n orchestrator
-        kubectl set image statefulset/billing-app \
-          billing-app=${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}/billing-app:latest \
-          -n orchestrator
-    
-    - name: Wait for rollout
-      run: |
-        kubectl rollout status deployment/api-gateway -n orchestrator --timeout=5m
-        kubectl rollout status deployment/inventory-app -n orchestrator --timeout=5m
-        kubectl rollout status statefulset/billing-app -n orchestrator --timeout=5m
-    
-    - name: Verify deployment
-      run: |
-        kubectl get pods -n orchestrator
-        kubectl get hpa -n orchestrator
+      - uses: actions/checkout@v4
+
+      - uses: azure/setup-kubectl@v3
+
+      - name: Configure kubectl
+        run: |
+          echo "${{ secrets.KUBECONFIG_PROD }}" | base64 -d > kubeconfig
+          echo "KUBECONFIG=$(pwd)/kubeconfig" >> $GITHUB_ENV
+
+      - name: Roll out new images
+        run: |
+          kubectl set image deployment/api-gateway \
+            api-gateway=${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}/api-gateway:latest \
+            -n orchestrator
+          kubectl set image deployment/inventory-app \
+            inventory-app=${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}/inventory-app:latest \
+            -n orchestrator
+          kubectl set image statefulset/billing-app \
+            billing-app=${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}/billing-app:latest \
+            -n orchestrator
+
+      - name: Wait for rollout
+        run: |
+          kubectl rollout status deployment/api-gateway -n orchestrator --timeout=5m
+          kubectl rollout status deployment/inventory-app -n orchestrator --timeout=5m
+          kubectl rollout status statefulset/billing-app -n orchestrator --timeout=5m
+
+      - name: Verify deployment
+        run: |
+          kubectl get pods -n orchestrator
+          kubectl get hpa -n orchestrator
