@@ -138,8 +138,10 @@ jobs:
 
       - name: Configure kubectl
         run: |
+          [ -z "${{ secrets.KUBECONFIG_DEV }}" ] && echo "::error::KUBECONFIG_DEV secret is not set" && exit 1
           echo "${{ secrets.KUBECONFIG_DEV }}" | base64 -d > kubeconfig
           echo "KUBECONFIG=$(pwd)/kubeconfig" >> $GITHUB_ENV
+          kubectl cluster-info
 
       - name: Roll out new images
         env:
@@ -169,7 +171,7 @@ jobs:
     if: github.ref == 'refs/heads/main'
     environment:
       name: production
-      url: https://orchestrator.example.com
+      url: ${{ steps.get-url.outputs.url }}
 
     steps:
       - uses: actions/checkout@v4
@@ -178,8 +180,10 @@ jobs:
 
       - name: Configure kubectl
         run: |
+          [ -z "${{ secrets.KUBECONFIG_PROD }}" ] && echo "::error::KUBECONFIG_PROD secret is not set" && exit 1
           echo "${{ secrets.KUBECONFIG_PROD }}" | base64 -d > kubeconfig
           echo "KUBECONFIG=$(pwd)/kubeconfig" >> $GITHUB_ENV
+          kubectl cluster-info
 
       - name: Roll out new images
         run: |
@@ -198,6 +202,17 @@ jobs:
           kubectl rollout status deployment/api-gateway -n orchestrator --timeout=5m
           kubectl rollout status deployment/inventory-app -n orchestrator --timeout=5m
           kubectl rollout status statefulset/billing-app -n orchestrator --timeout=5m
+
+      - name: Get deployment URL
+        id: get-url
+        run: |
+          ALB=$(kubectl get ingress orchestrator-ingress -n orchestrator \
+            -o jsonpath='{.status.loadBalancer.ingress[0].hostname}' 2>/dev/null || echo "")
+          if [ -z "$ALB" ]; then
+            echo "url=http://pending" >> $GITHUB_OUTPUT
+          else
+            echo "url=http://${ALB}" >> $GITHUB_OUTPUT
+          fi
 
       - name: Verify deployment
         run: |
